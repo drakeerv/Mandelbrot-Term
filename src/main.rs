@@ -1,5 +1,5 @@
 #![feature(portable_simd)]
-use std::simd::{f64x1, u32x1};
+use std::simd::{f64x1, u32x1, SimdFloat};
 
 use rayon::prelude::*;
 use std::io::Write;
@@ -11,12 +11,26 @@ const TWO_QUADRANTS: [&str; 6] = ["▚", "▞", "▄", "▀", "▌", "▐"];
 const THREE_QUADRANTS: [&str; 4] = ["▙", "▟", "▛", "▜"];
 const FULL_BLOCK: [&str; 2] = ["█", " "];
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 struct Position {
     top: f64,
     bottom: f64,
     left: f64,
     right: f64,
+}
+
+impl Position {
+    fn width(&self) -> f64 {
+        self.right - self.left
+    }
+
+    fn height(&self) -> f64 {
+        self.bottom - self.top
+    }
+
+    fn center(&self) -> (f64, f64) {
+        ((self.left + self.right) / 2.0, (self.top + self.bottom) / 2.0)
+    }
 }
 
 fn scale_number(
@@ -56,36 +70,18 @@ struct Pixel {
     background_color: Option<crossterm::style::Color>,
 }
 
-fn min(a: f64x1, b: f64x1) -> f64x1 {
-    if a < b {
-        a
-    } else {
-        b
-    }
-}
-
-fn max(a: f64x1, b: f64x1) -> f64x1 {
-    if a > b {
-        a
-    } else {
-        b
-    }
-}
-
 fn hsl_to_rgb(hsl: [f64x1; 3]) -> [f64x1; 3] {
     let s = hsl[1] / f64x1::splat(100.0);
     let l = hsl[2] / f64x1::splat(100.0);
     let k = |n: f64x1| (n + hsl[0] / f64x1::splat(30.0)) % f64x1::splat(12.0);
 
-    let a = s * min(l, f64x1::splat(1.0) - l);
+    let a = s * l.simd_min(f64x1::splat(1.0) - l);
     let f = |n: f64x1| {
-        l - a * max(
-            -f64x1::splat(1.0),
-            min(
-                k(n) - f64x1::splat(3.0),
-                min(f64x1::splat(9.0) - k(n), f64x1::splat(1.0)),
-            ),
-        )
+        l - a
+            * (-f64x1::splat(1.0)).simd_max(
+                (k(n) - f64x1::splat(3.0))
+                    .simd_min((f64x1::splat(9.0) - k(n)).simd_min(f64x1::splat(1.0))),
+            )
     };
     [
         f64x1::splat(255.0) * f(f64x1::splat(0.0)),
@@ -101,8 +97,8 @@ fn get_color(iteration: u32x1, max_iterations: u32x1) -> [f64x1; 3] {
         return [f64x1::splat(255.0); 3];
     }
 
-    let h = (f64x1::splat(iteration[0] as f64) * f64x1::splat(360.0)
-        / f64x1::splat(max_iterations[0] as f64)) as f64x1;
+    let h = f64x1::splat(iteration[0] as f64) * f64x1::splat(360.0)
+        / f64x1::splat(max_iterations[0] as f64);
     hsl_to_rgb([h, f64x1::splat(100.0), f64x1::splat(50.0)])
 }
 
@@ -307,61 +303,61 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 match event.code {
                     crossterm::event::KeyCode::Char('q') => break,
                     crossterm::event::KeyCode::Char('w') => {
-                        let center_y = (position.top + position.bottom) / 2.0;
-                        let height = position.bottom - position.top;
+                        let center = position.center();
+                        let height = position.height();
                         let zoom = height / 2.0;
 
-                        position.top = center_y - zoom * 1.1;
-                        position.bottom = center_y + zoom * 0.9;
+                        position.top = center.1 - zoom * 1.1;
+                        position.bottom = center.1 + zoom * 0.9;
                         should_redraw = true;
                     }
                     crossterm::event::KeyCode::Char('s') => {
-                        let center_y = (position.top + position.bottom) / 2.0;
-                        let height = position.bottom - position.top;
+                        let center = position.center();
+                        let height = position.height();
                         let zoom = height / 2.0;
 
-                        position.top = center_y - zoom * 0.9;
-                        position.bottom = center_y + zoom * 1.1;
+                        position.top = center.1 - zoom * 0.9;
+                        position.bottom = center.1 + zoom * 1.1;
                         should_redraw = true;
                     }
                     crossterm::event::KeyCode::Char('a') => {
-                        let center_x = (position.left + position.right) / 2.0;
-                        let width = position.right - position.left;
+                        let center = position.center();
+                        let width = position.width();
                         let zoom = width / 2.0;
 
-                        position.left = center_x - zoom * 1.1;
-                        position.right = center_x + zoom * 0.9;
+                        position.left = center.0 - zoom * 1.1;
+                        position.right = center.0 + zoom * 0.9;
                         should_redraw = true;
                     }
                     crossterm::event::KeyCode::Char('d') => {
-                        let center_x = (position.left + position.right) / 2.0;
-                        let width = position.right - position.left;
+                        let center = position.center();
+                        let width = position.width();
                         let zoom = width / 2.0;
 
-                        position.left = center_x - zoom * 0.9;
-                        position.right = center_x + zoom * 1.1;
+                        position.left = center.0 - zoom * 0.9;
+                        position.right = center.0 + zoom * 1.1;
                         should_redraw = true;
                     }
                     crossterm::event::KeyCode::Up => {
-                        let center_x = (position.left + position.right) / 2.0;
-                        let center_y = (position.top + position.bottom) / 2.0;
-                        let width = position.right - position.left;
-                        let height = position.bottom - position.top;
-                        position.top = center_y - height / 2.0 * 0.9;
-                        position.bottom = center_y + height / 2.0 * 0.9;
-                        position.left = center_x - width / 2.0 * 0.9;
-                        position.right = center_x + width / 2.0 * 0.9;
+                        let center = position.center();
+                        let width = position.width();
+                        let height = position.height();
+
+                        position.top = center.1 - height / 2.0 * 0.9;
+                        position.bottom = center.1 + height / 2.0 * 0.9;
+                        position.left = center.0 - width / 2.0 * 0.9;
+                        position.right = center.0 + width / 2.0 * 0.9;
                         should_redraw = true;
                     }
                     crossterm::event::KeyCode::Down => {
-                        let center_x = (position.left + position.right) / 2.0;
-                        let center_y = (position.top + position.bottom) / 2.0;
-                        let width = position.right - position.left;
-                        let height = position.bottom - position.top;
-                        position.top = center_y - height / 2.0 * 1.1;
-                        position.bottom = center_y + height / 2.0 * 1.1;
-                        position.left = center_x - width / 2.0 * 1.1;
-                        position.right = center_x + width / 2.0 * 1.1;
+                        let center = position.center();
+                        let width = position.width();
+                        let height = position.height();
+
+                        position.top = center.1 - height / 2.0 * 1.1;
+                        position.bottom = center.1 + height / 2.0 * 1.1;
+                        position.left = center.0 - width / 2.0 * 1.1;
+                        position.right = center.0 + width / 2.0 * 1.1;
                         should_redraw = true;
                     }
                     crossterm::event::KeyCode::Enter => {
@@ -378,11 +374,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     crossterm::event::KeyCode::Char('r') => {
-                        if position.top != default_position.top
-                            || position.bottom != default_position.bottom
-                            || position.left != default_position.left
-                            || position.right != default_position.right
-                        {
+                        if position != default_position {
                             position = default_position;
                             should_redraw = true;
                         }
