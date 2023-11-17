@@ -33,6 +33,13 @@ impl Position {
     }
 }
 
+#[derive(PartialEq, Debug)]
+struct Pixel {
+    character: char,
+    foreground_color: crossterm::style::Color,
+    background_color: Option<crossterm::style::Color>,
+}
+
 fn scale_number(
     number: f64x1,
     in_min: f64x1,
@@ -62,12 +69,6 @@ fn get_pixel(blocks: [[bool; 2]; 2]) -> char {
         [[true, false], [false, false]] => QUADRANTS[1].chars().next().unwrap(),
         [[false, false], [true, false]] => QUADRANTS[0].chars().next().unwrap(),
     }
-}
-
-struct Pixel {
-    character: char,
-    foreground_color: crossterm::style::Color,
-    background_color: Option<crossterm::style::Color>,
 }
 
 fn hsl_to_rgb(hsl: [f64x1; 3]) -> [f64x1; 3] {
@@ -417,4 +418,184 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     drop(writer);
     Ok(())
+}
+
+// tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scale_number() {
+        assert_eq!(
+            scale_number(f64x1::splat(0.0), f64x1::splat(0.0), f64x1::splat(1.0), f64x1::splat(0.0), f64x1::splat(10.0)),
+            f64x1::splat(0.0)
+        );
+        assert_eq!(
+            scale_number(f64x1::splat(1.0), f64x1::splat(0.0), f64x1::splat(1.0), f64x1::splat(0.0), f64x1::splat(10.0)),
+            f64x1::splat(10.0)
+        );
+        assert_eq!(
+            scale_number(f64x1::splat(0.5), f64x1::splat(0.0), f64x1::splat(1.0), f64x1::splat(0.0), f64x1::splat(10.0)),
+            f64x1::splat(5.0)
+        );
+    }
+
+    #[test]
+    fn test_get_pixel() {
+        assert_eq!(
+            get_pixel([[false, false], [false, false]]),
+            FULL_BLOCK[1].chars().next().unwrap()
+        );
+        assert_eq!(
+            get_pixel([[true, true], [true, true]]),
+            FULL_BLOCK[0].chars().next().unwrap()
+        );
+        assert_eq!(
+            get_pixel([[false, true], [true, true]]),
+            THREE_QUADRANTS[1].chars().next().unwrap()
+        );
+        assert_eq!(
+            get_pixel([[true, false], [true, true]]),
+            THREE_QUADRANTS[0].chars().next().unwrap()
+        );
+        assert_eq!(
+            get_pixel([[true, true], [false, true]]),
+            THREE_QUADRANTS[3].chars().next().unwrap()
+        );
+        assert_eq!(
+            get_pixel([[true, true], [true, false]]),
+            THREE_QUADRANTS[2].chars().next().unwrap()
+        );
+        assert_eq!(
+            get_pixel([[false, false], [true, true]]),
+            TWO_QUADRANTS[2].chars().next().unwrap()
+        );
+        assert_eq!(
+            get_pixel([[true, false], [false, true]]),
+            TWO_QUADRANTS[0].chars().next().unwrap()
+        );
+        assert_eq!(
+            get_pixel([[true, true], [false, false]]),
+            TWO_QUADRANTS[3].chars().next().unwrap()
+        );
+        assert_eq!(
+            get_pixel([[false, true], [true, false]]),
+            TWO_QUADRANTS[1].chars().next().unwrap()
+        );
+        assert_eq!(
+            get_pixel([[false, true], [false, true]]),
+            TWO_QUADRANTS[4].chars().next().unwrap()
+        );
+        assert_eq!(
+            get_pixel([[true, false], [true, false]]),
+            TWO_QUADRANTS[5].chars().next().unwrap()
+        );
+        assert_eq!(
+            get_pixel([[false, false], [false, true]]),
+            QUADRANTS[3].chars().next().unwrap()
+        );
+        assert_eq!(
+            get_pixel([[false, true], [false, false]]),
+            QUADRANTS[2].chars().next().unwrap()
+        );
+        assert_eq!(
+            get_pixel([[true, false], [false, false]]),
+            QUADRANTS[1].chars().next().unwrap()
+        );
+        assert_eq!(
+            get_pixel([[false, false], [true, false]]),
+            QUADRANTS[0].chars().next().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_hsl_to_rgb() {
+        assert_eq!(
+            hsl_to_rgb([f64x1::splat(0.0), f64x1::splat(100.0), f64x1::splat(50.0)]),
+            [f64x1::splat(255.0), f64x1::splat(0.0), f64x1::splat(0.0)]
+        );
+        assert_eq!(
+            hsl_to_rgb([f64x1::splat(120.0), f64x1::splat(100.0), f64x1::splat(50.0)]),
+            [f64x1::splat(0.0), f64x1::splat(255.0), f64x1::splat(0.0)]
+        );
+        assert_eq!(
+            hsl_to_rgb([f64x1::splat(240.0), f64x1::splat(100.0), f64x1::splat(50.0)]),
+            [f64x1::splat(0.0), f64x1::splat(0.0), f64x1::splat(255.0)]
+        );
+        assert_eq!(
+            hsl_to_rgb([f64x1::splat(60.0), f64x1::splat(100.0), f64x1::splat(50.0)]),
+            [f64x1::splat(255.0), f64x1::splat(255.0), f64x1::splat(0.0)]
+        );
+        assert_eq!(
+            hsl_to_rgb([f64x1::splat(180.0), f64x1::splat(100.0), f64x1::splat(50.0)]),
+            [f64x1::splat(0.0), f64x1::splat(255.0), f64x1::splat(255.0)]
+        );
+        assert_eq!(
+            hsl_to_rgb([f64x1::splat(300.0), f64x1::splat(100.0), f64x1::splat(50.0)]),
+            [f64x1::splat(255.0), f64x1::splat(0.0), f64x1::splat(255.0)]
+        );
+        assert_eq!(
+            hsl_to_rgb([f64x1::splat(0.0), f64x1::splat(0.0), f64x1::splat(0.0)]),
+            [f64x1::splat(0.0), f64x1::splat(0.0), f64x1::splat(0.0)]
+        );
+    }
+
+    #[test]
+    fn test_get_color() {
+        assert_eq!(
+            get_color(u32x1::splat(0), u32x1::splat(100)),
+            [f64x1::splat(255.0); 3]
+        );
+        assert_eq!(
+            get_color(u32x1::splat(100), u32x1::splat(100)),
+            [f64x1::splat(0.0); 3]
+        );
+        assert_eq!(
+            get_color(u32x1::splat(50), u32x1::splat(100)),
+            [f64x1::splat(0.0), f64x1::splat(255.0), f64x1::splat(255.0)]
+        );
+    }
+
+    #[test]
+    fn test_calculate_pixel() {
+        assert_eq!(
+            calculate_pixel(0, 0, 1, 1, &Position {
+                top: -1.0,
+                bottom: 1.0,
+                left: -2.0,
+                right: 1.0,
+            }, u32x1::splat(100)),
+            Pixel {
+                character: TWO_QUADRANTS[2].chars().next().unwrap(),
+                foreground_color: crossterm::style::Color::Rgb {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                },
+                background_color: Some(crossterm::style::Color::Rgb {
+                    r: 255,
+                    g: 30,
+                    b: 0,
+                }),
+            }
+        );
+        assert_eq!(
+            calculate_pixel(0, 0, 1, 1, &Position {
+                top: -1.0,
+                bottom: 1.0,
+                left: -2.0,
+                right: 1.0,
+            }, u32x1::splat(0)),
+            Pixel {
+                character: FULL_BLOCK[0].chars().next().unwrap(),
+                foreground_color: crossterm::style::Color::Rgb {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                },
+                background_color: None,
+            }
+        );
+    }
 }
