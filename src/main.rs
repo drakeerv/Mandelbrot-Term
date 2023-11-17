@@ -11,6 +11,59 @@ const TWO_QUADRANTS: [&str; 6] = ["▚", "▞", "▄", "▀", "▌", "▐"];
 const THREE_QUADRANTS: [&str; 4] = ["▙", "▟", "▛", "▜"];
 const FULL_BLOCK: [&str; 2] = ["█", " "];
 
+const FRACTALS: [fn(f64x1, f64x1, u32x1) -> u32x1; 3] = [
+    |scaled_x: f64x1, scaled_y: f64x1, max_iterations: u32x1| {
+        // Mandelbrot Set
+
+        let mut x = f64x1::splat(0.0);
+        let mut y = f64x1::splat(0.0);
+        let mut iteration = u32x1::splat(0);
+
+        while x * x + y * y <= f64x1::splat(4.0) && iteration < max_iterations {
+            let x_temp = x * x - y * y + scaled_x;
+            y = f64x1::splat(2.0) * x * y + scaled_y;
+            x = x_temp;
+            iteration += u32x1::splat(1);
+        }
+
+        iteration
+    },
+    |scaled_x: f64x1, scaled_y: f64x1, max_iterations: u32x1| {
+        // Sinking Ship
+
+        let mut zx = scaled_x;
+        let mut zy = scaled_y;
+        let mut iteration = u32x1::splat(0);
+
+        while zx * zx + zy * zy <= f64x1::splat(4.0) && iteration < max_iterations {
+            let zx_temp = zx * zx - zy * zy + scaled_x;
+            zy = (f64x1::splat(2.0) * zx * zy).abs() + scaled_y;
+            zx = zx_temp;
+            iteration += u32x1::splat(1);
+        }
+
+        iteration
+    },
+    |scaled_x: f64x1, scaled_y: f64x1, max_iterations: u32x1| {
+        // Julia Set
+
+        let escape_radius = f64x1::splat(2.0);
+
+        let mut zx = scaled_x;
+        let mut zy = scaled_y;
+        let mut iteration = u32x1::splat(0);
+
+        while zx * zx + zy * zy <= escape_radius * escape_radius && iteration < max_iterations {
+            let zx_temp = zx * zx - zy * zy;
+            zy = f64x1::splat(2.0) * zx * zy + f64x1::splat(0.8);
+            zx = zx_temp + f64x1::splat(0.156);
+            iteration += u32x1::splat(1);
+        }
+
+        iteration
+    }
+];
+
 #[derive(Copy, Clone, PartialEq)]
 struct Position {
     top: f64,
@@ -29,7 +82,10 @@ impl Position {
     }
 
     fn center(&self) -> (f64, f64) {
-        ((self.left + self.right) / 2.0, (self.top + self.bottom) / 2.0)
+        (
+            (self.left + self.right) / 2.0,
+            (self.top + self.bottom) / 2.0,
+        )
     }
 }
 
@@ -110,6 +166,7 @@ fn calculate_pixel(
     height: u16,
     position: &Position,
     max_iterations: u32x1,
+    fractal_index: usize
 ) -> Pixel {
     let mut subpixel_values = [[u32x1::splat(0); 2]; 2];
 
@@ -130,16 +187,7 @@ fn calculate_pixel(
                 f64x1::splat(position.bottom),
             );
 
-            let mut x = f64x1::splat(0.0);
-            let mut y = f64x1::splat(0.0);
-            let mut iteration = u32x1::splat(0);
-
-            while x * x + y * y <= f64x1::splat(4.0) && iteration < max_iterations {
-                let x_temp = x * x - y * y + scaled_x;
-                y = f64x1::splat(2.0) * x * y + scaled_y;
-                x = x_temp;
-                iteration += u32x1::splat(1);
-            }
+            let iteration = FRACTALS[fractal_index](scaled_x, scaled_y, max_iterations);
 
             subpixel_values[subpixel_y as usize][subpixel_x as usize] = iteration;
         }
@@ -225,6 +273,7 @@ fn render_row(
     height: u16,
     position: &Position,
     max_iterations: u32x1,
+    fractal_index: usize
 ) -> String {
     let mut last_fg_color = crossterm::style::Color::Reset;
     let mut last_bg_color = crossterm::style::Color::Reset;
@@ -232,7 +281,7 @@ fn render_row(
     let mut output = String::new();
 
     for pixel_x in 0..width {
-        let pixel = calculate_pixel(pixel_x, pixel_y, width, height, position, max_iterations);
+        let pixel = calculate_pixel(pixel_x, pixel_y, width, height, position, max_iterations, fractal_index);
 
         let fg_color = pixel.foreground_color;
         if fg_color != last_fg_color {
@@ -259,10 +308,10 @@ fn render_row(
     output
 }
 
-fn render_frame(width: u16, height: u16, position: &Position, max_iterations: u32x1) -> String {
+fn render_frame(width: u16, height: u16, position: &Position, max_iterations: u32x1, fractal_index: usize) -> String {
     let output = (0..height)
         .into_par_iter()
-        .map(|pixel_y| render_row(pixel_y, width, height, position, max_iterations))
+        .map(|pixel_y| render_row(pixel_y, width, height, position, max_iterations, fractal_index))
         .collect::<Vec<String>>()
         .join("\n");
     format!("{}{}", output, crossterm::style::ResetColor)
@@ -279,6 +328,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut position = default_position.clone();
     let mut max_iterations = u32x1::splat(100);
+    let mut fractal_index = 0;
     let mut last_terminal_size = (0, 0);
 
     crossterm::terminal::enable_raw_mode()?;
@@ -374,6 +424,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             should_redraw = true;
                         }
                     }
+                    crossterm::event::KeyCode::Char('[') => {
+                        if fractal_index == 0 {
+                            fractal_index = FRACTALS.len() - 1;
+                        } else {
+                            fractal_index -= 1;
+                        }
+                        should_redraw = true;
+                    }
+                    crossterm::event::KeyCode::Char(']') => {
+                        if fractal_index == FRACTALS.len() - 1 {
+                            fractal_index = 0;
+                        } else {
+                            fractal_index += 1;
+                        }
+                        should_redraw = true;
+                    }
                     crossterm::event::KeyCode::Char('r') => {
                         if position != default_position {
                             position = default_position;
@@ -398,7 +464,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if should_redraw {
             let terminal_size = crossterm::terminal::size()?;
             let rendered =
-                render_frame(terminal_size.0, terminal_size.1, &position, max_iterations);
+                render_frame(terminal_size.0, terminal_size.1, &position, max_iterations, fractal_index);
             crossterm::execute!(writer, crossterm::cursor::MoveTo(0, 0))?;
             writer.write_all(rendered.as_bytes())?;
             writer.flush()?;
