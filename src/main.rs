@@ -631,7 +631,7 @@ mod tests {
                 bottom: 1.0,
                 left: -2.0,
                 right: 1.0,
-            }, u32x1::splat(100)),
+            }, u32x1::splat(100), 0),
             Pixel {
                 character: TWO_QUADRANTS[2].chars().next().unwrap(),
                 foreground_color: crossterm::style::Color::Rgb {
@@ -652,7 +652,7 @@ mod tests {
                 bottom: 1.0,
                 left: -2.0,
                 right: 1.0,
-            }, u32x1::splat(0)),
+            }, u32x1::splat(0), 0),
             Pixel {
                 character: FULL_BLOCK[0].chars().next().unwrap(),
                 foreground_color: crossterm::style::Color::Rgb {
