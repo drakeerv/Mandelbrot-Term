@@ -1,5 +1,6 @@
 #![feature(portable_simd)]
-use std::simd::{f64x1, u32x1, SimdFloat};
+use std::simd::{f64x1, u32x1};
+use std::simd::prelude::SimdFloat;
 
 use rayon::prelude::*;
 use std::io::Write;
