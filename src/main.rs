@@ -310,11 +310,17 @@ fn render_row(
 }
 
 fn render_frame(width: u16, height: u16, position: &Position, max_iterations: u32x1, fractal_index: usize) -> String {
-    let output = (0..height)
+    let rows = (0..height)
         .into_par_iter()
-        .map(|pixel_y| render_row(pixel_y, width, height, position, max_iterations, fractal_index))
-        .collect::<Vec<String>>()
-        .join("\n");
+        .map(|pixel_y| (pixel_y, render_row(pixel_y, width, height, position, max_iterations, fractal_index)))
+        .collect::<Vec<(u16, String)>>();
+    
+    let mut output = String::new();
+    for (y, row) in rows {
+        output.push_str(&format!("{}", crossterm::cursor::MoveTo(0, y)));
+        output.push_str(&row);
+    }
+    
     format!("{}{}", output, crossterm::style::ResetColor)
 }
 
