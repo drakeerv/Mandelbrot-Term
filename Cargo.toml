@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-crossterm = "0.28.1"
+crossterm = { version = "0.28.1", default-features = false, features = ["events"] }
 rayon = "1.10.0"
 
 [profile.release]
