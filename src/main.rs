@@ -3,6 +3,8 @@ use std::simd::{f64x4, u32x4};
 use std::simd::prelude::*;
 use rayon::prelude::*;
 use std::io::Write;
+use std::sync::mpsc::{self, Sender, Receiver};
+use std::thread;
 
 use crossterm::{
     cursor,
@@ -14,10 +16,10 @@ use crossterm::{
 
 const TITLE: &str = "Mandelbrot Set";
 
-const QUADRANTS: [&str; 4] = ["▖", "▘", "▝", "▗"];
-const TWO_QUADRANTS: [&str; 6] = ["▚", "▞", "▄", "▀", "▌", "▐"];
-const THREE_QUADRANTS: [&str; 4] = ["▙", "▟", "▛", "▜"];
-const FULL_BLOCK: [&str; 2] = ["█", " "];
+const QUADRANTS: [char; 4] = ['▖', '▘', '▝', '▗'];
+const TWO_QUADRANTS: [char; 6] = ['▚', '▞', '▄', '▀', '▌', '▐'];
+const THREE_QUADRANTS: [char; 4] = ['▙', '▟', '▛', '▜'];
+const FULL_BLOCK: [char; 2] = ['█', ' '];
 
 type FractalFn = fn(f64x4, f64x4, u32x4) -> u32x4;
 
@@ -118,6 +120,12 @@ struct Pixel {
     background_color: Option<Color>,
 }
 
+// Enum for commands sent to the writer thread
+enum WriterCommand {
+    Render(String),
+    Terminate,
+}
+
 fn scale_number(
     number: f64x4,
     in_min: f64x4,
@@ -130,22 +138,22 @@ fn scale_number(
 
 fn get_pixel(blocks: [[bool; 2]; 2]) -> char {
     match blocks {
-        [[true, true], [true, true]] => FULL_BLOCK[0].chars().next().unwrap(),
-        [[false, false], [false, false]] => FULL_BLOCK[1].chars().next().unwrap(),
-        [[false, true], [true, true]] => THREE_QUADRANTS[1].chars().next().unwrap(),
-        [[true, false], [true, true]] => THREE_QUADRANTS[0].chars().next().unwrap(),
-        [[true, true], [false, true]] => THREE_QUADRANTS[3].chars().next().unwrap(),
-        [[true, true], [true, false]] => THREE_QUADRANTS[2].chars().next().unwrap(),
-        [[false, false], [true, true]] => TWO_QUADRANTS[2].chars().next().unwrap(),
-        [[true, false], [false, true]] => TWO_QUADRANTS[0].chars().next().unwrap(),
-        [[true, true], [false, false]] => TWO_QUADRANTS[3].chars().next().unwrap(),
-        [[false, true], [true, false]] => TWO_QUADRANTS[1].chars().next().unwrap(),
-        [[false, true], [false, true]] => TWO_QUADRANTS[4].chars().next().unwrap(),
-        [[true, false], [true, false]] => TWO_QUADRANTS[5].chars().next().unwrap(),
-        [[false, false], [false, true]] => QUADRANTS[3].chars().next().unwrap(),
-        [[false, true], [false, false]] => QUADRANTS[2].chars().next().unwrap(),
-        [[true, false], [false, false]] => QUADRANTS[1].chars().next().unwrap(),
-        [[false, false], [true, false]] => QUADRANTS[0].chars().next().unwrap(),
+        [[true, true], [true, true]] => FULL_BLOCK[0],
+        [[false, false], [false, false]] => FULL_BLOCK[1],
+        [[false, true], [true, true]] => THREE_QUADRANTS[1],
+        [[true, false], [true, true]] => THREE_QUADRANTS[0],
+        [[true, true], [false, true]] => THREE_QUADRANTS[3],
+        [[true, true], [true, false]] => THREE_QUADRANTS[2],
+        [[false, false], [true, true]] => TWO_QUADRANTS[2],
+        [[true, false], [false, true]] => TWO_QUADRANTS[0],
+        [[true, true], [false, false]] => TWO_QUADRANTS[3],
+        [[false, true], [true, false]] => TWO_QUADRANTS[1],
+        [[false, true], [false, true]] => TWO_QUADRANTS[4],
+        [[true, false], [true, false]] => TWO_QUADRANTS[5],
+        [[false, false], [false, true]] => QUADRANTS[3],
+        [[false, true], [false, false]] => QUADRANTS[2],
+        [[true, false], [false, false]] => QUADRANTS[1],
+        [[false, false], [true, false]] => QUADRANTS[0],
     }
 }
 
@@ -359,9 +367,61 @@ fn render_frame(
     format!("{}{}", output, ResetColor)
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut writer = std::io::BufWriter::new(std::io::stdout());
+// Function to start the writer thread
+fn start_writer_thread() -> Sender<WriterCommand> {
+    let (tx, rx): (Sender<WriterCommand>, Receiver<WriterCommand>) = mpsc::channel();
+    
+    thread::spawn(move || {
+        let mut stdout = std::io::BufWriter::new(std::io::stdout());
+        
+        loop {
+            match rx.recv() {
+                Ok(WriterCommand::Render(frame)) => {
+                    if let Err(e) = execute!(stdout, cursor::MoveTo(0, 0)) {
+                        eprintln!("Error moving cursor: {}", e);
+                        break;
+                    }
+                    
+                    if let Err(e) = stdout.write_all(frame.as_bytes()) {
+                        eprintln!("Error writing to stdout: {}", e);
+                        break;
+                    }
+                    
+                    if let Err(e) = stdout.flush() {
+                        eprintln!("Error flushing stdout: {}", e);
+                        break;
+                    }
+                }
+                Ok(WriterCommand::Terminate) => {
+                    break;
+                }
+                Err(e) => {
+                    eprintln!("Channel receive error: {}", e);
+                    break;
+                }
+            }
+        }
+    });
+    
+    tx
+}
 
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize terminal
+    terminal::enable_raw_mode()?;
+    execute!(
+        std::io::stdout(),
+        terminal::SetTitle(TITLE),
+        terminal::EnterAlternateScreen,
+        cursor::DisableBlinking,
+        cursor::Hide,
+        terminal::Clear(terminal::ClearType::All),
+        cursor::MoveTo(0, 0)
+    )?;
+
+    // Start writer thread
+    let writer_tx = start_writer_thread();
+    
     let default_position = Position {
         top: -1.0,
         bottom: 1.0,
@@ -372,151 +432,166 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut max_iterations = u32x4::splat(100);
     let mut fractal_index = 0;
     let mut last_terminal_size = (0, 0);
-
-    terminal::enable_raw_mode()?;
-    execute!(
-        writer,
-        terminal::SetTitle(TITLE),
-        terminal::EnterAlternateScreen,
-        cursor::DisableBlinking,
-        cursor::Hide,
-        terminal::Clear(terminal::ClearType::All),
-        cursor::MoveTo(0, 0)
-    )?;
+    
+    // For render throttling
+    let mut pending_render = false;
+    let mut last_render = std::time::Instant::now();
+    let render_delay = std::time::Duration::from_millis(16); // ~60fps
 
     loop {
         let mut should_redraw = false;
 
-        match event::read()? {
-            event::Event::Key(event) => {
-                if event.kind != event::KeyEventKind::Press {
-                    continue;
-                }
-                match event.code {
-                    event::KeyCode::Char('q') => break,
-                    event::KeyCode::Char('w') => {
-                        let center = position.center();
-                        let height = position.height();
-                        let zoom = height / 2.0;
-                        position.top = center.1 - zoom * 1.1;
-                        position.bottom = center.1 + zoom * 0.9;
-                        should_redraw = true;
+        // Check if an event is available with a short timeout
+        if event::poll(std::time::Duration::from_millis(10))? {
+            match event::read()? {
+                event::Event::Key(event) => {
+                    if event.kind != event::KeyEventKind::Press {
+                        continue;
                     }
-                    event::KeyCode::Char('s') => {
-                        let center = position.center();
-                        let height = position.height();
-                        let zoom = height / 2.0;
-                        position.top = center.1 - zoom * 0.9;
-                        position.bottom = center.1 + zoom * 1.1;
-                        should_redraw = true;
-                    }
-                    event::KeyCode::Char('a') => {
-                        let center = position.center();
-                        let width = position.width();
-                        let zoom = width / 2.0;
-                        position.left = center.0 - zoom * 1.1;
-                        position.right = center.0 + zoom * 0.9;
-                        should_redraw = true;
-                    }
-                    event::KeyCode::Char('d') => {
-                        let center = position.center();
-                        let width = position.width();
-                        let zoom = width / 2.0;
-                        position.left = center.0 - zoom * 0.9;
-                        position.right = center.0 + zoom * 1.1;
-                        should_redraw = true;
-                    }
-                    event::KeyCode::Up => {
-                        let center = position.center();
-                        let width = position.width();
-                        let height = position.height();
-                        position.top = center.1 - height / 2.0 * 0.9;
-                        position.bottom = center.1 + height / 2.0 * 0.9;
-                        position.left = center.0 - width / 2.0 * 0.9;
-                        position.right = center.0 + width / 2.0 * 0.9;
-                        should_redraw = true;
-                    }
-                    event::KeyCode::Down => {
-                        let center = position.center();
-                        let width = position.width();
-                        let height = position.height();
-                        position.top = center.1 - height / 2.0 * 1.1;
-                        position.bottom = center.1 + height / 2.0 * 1.1;
-                        position.left = center.0 - width / 2.0 * 1.1;
-                        position.right = center.0 + width / 2.0 * 1.1;
-                        should_redraw = true;
-                    }
-                    event::KeyCode::Enter => {
-                        should_redraw = true;
-                    }
-                    event::KeyCode::Char('=') => {
-                        max_iterations += u32x4::splat(10);
-                        should_redraw = true;
-                    }
-                    event::KeyCode::Char('-') => {
-                        if max_iterations > u32x4::splat(10) {
-                            max_iterations -= u32x4::splat(10);
+                    match event.code {
+                        event::KeyCode::Char('q') => break,
+                        event::KeyCode::Char('w') => {
+                            let center = position.center();
+                            let height = position.height();
+                            let zoom = height / 2.0;
+                            position.top = center.1 - zoom * 1.1;
+                            position.bottom = center.1 + zoom * 0.9;
                             should_redraw = true;
                         }
-                    }
-                    event::KeyCode::Char('[') => {
-                        if fractal_index == 0 {
-                            fractal_index = FRACTALS.len() - 1;
-                        } else {
-                            fractal_index -= 1;
-                        }
-                        should_redraw = true;
-                    }
-                    event::KeyCode::Char(']') => {
-                        if fractal_index == FRACTALS.len() - 1 {
-                            fractal_index = 0;
-                        } else {
-                            fractal_index += 1;
-                        }
-                        should_redraw = true;
-                    }
-                    event::KeyCode::Char('r') => {
-                        if position != default_position {
-                            position = default_position;
+                        event::KeyCode::Char('s') => {
+                            let center = position.center();
+                            let height = position.height();
+                            let zoom = height / 2.0;
+                            position.top = center.1 - zoom * 0.9;
+                            position.bottom = center.1 + zoom * 1.1;
                             should_redraw = true;
                         }
+                        event::KeyCode::Char('a') => {
+                            let center = position.center();
+                            let width = position.width();
+                            let zoom = width / 2.0;
+                            position.left = center.0 - zoom * 1.1;
+                            position.right = center.0 + zoom * 0.9;
+                            should_redraw = true;
+                        }
+                        event::KeyCode::Char('d') => {
+                            let center = position.center();
+                            let width = position.width();
+                            let zoom = width / 2.0;
+                            position.left = center.0 - zoom * 0.9;
+                            position.right = center.0 + zoom * 1.1;
+                            should_redraw = true;
+                        }
+                        event::KeyCode::Up => {
+                            let center = position.center();
+                            let width = position.width();
+                            let height = position.height();
+                            position.top = center.1 - height / 2.0 * 0.9;
+                            position.bottom = center.1 + height / 2.0 * 0.9;
+                            position.left = center.0 - width / 2.0 * 0.9;
+                            position.right = center.0 + width / 2.0 * 0.9;
+                            should_redraw = true;
+                        }
+                        event::KeyCode::Down => {
+                            let center = position.center();
+                            let width = position.width();
+                            let height = position.height();
+                            position.top = center.1 - height / 2.0 * 1.1;
+                            position.bottom = center.1 + height / 2.0 * 1.1;
+                            position.left = center.0 - width / 2.0 * 1.1;
+                            position.right = center.0 + width / 2.0 * 1.1;
+                            should_redraw = true;
+                        }
+                        event::KeyCode::Enter => {
+                            should_redraw = true;
+                        }
+                        event::KeyCode::Char('=') => {
+                            max_iterations += u32x4::splat(10);
+                            should_redraw = true;
+                        }
+                        event::KeyCode::Char('-') => {
+                            if max_iterations > u32x4::splat(10) {
+                                max_iterations -= u32x4::splat(10);
+                                should_redraw = true;
+                            }
+                        }
+                        event::KeyCode::Char('[') => {
+                            if fractal_index == 0 {
+                                fractal_index = FRACTALS.len() - 1;
+                            } else {
+                                fractal_index -= 1;
+                            }
+                            should_redraw = true;
+                        }
+                        event::KeyCode::Char(']') => {
+                            if fractal_index == FRACTALS.len() - 1 {
+                                fractal_index = 0;
+                            } else {
+                                fractal_index += 1;
+                            }
+                            should_redraw = true;
+                        }
+                        event::KeyCode::Char('r') => {
+                            if position != default_position {
+                                position = default_position;
+                                should_redraw = true;
+                            }
+                        }
+                        _ => (),
                     }
-                    _ => (),
                 }
-            }
-            event::Event::Resize(width, height) => {
-                if (width, height) != last_terminal_size {
-                    execute!(writer, terminal::Clear(terminal::ClearType::All))?;
-                    should_redraw = true;
+                event::Event::Resize(width, height) => {
+                    if (width, height) != last_terminal_size {
+                        execute!(std::io::stdout(), terminal::Clear(terminal::ClearType::All))?;
+                        last_terminal_size = (width, height);
+                        should_redraw = true;
+                    }
                 }
+                _ => (),
             }
-            _ => (),
         }
 
+        // Handle rendering with throttling
         if should_redraw {
+            pending_render = true;
+        }
+
+        if pending_render && last_render.elapsed() >= render_delay {
             let terminal_size = terminal::size()?;
-            let rendered = render_frame(
-                terminal_size.0,
-                terminal_size.1,
-                &position,
-                max_iterations,
-                fractal_index,
-            );
-            execute!(writer, cursor::MoveTo(0, 0))?;
-            writer.write_all(rendered.as_bytes())?;
-            writer.flush()?;
-            last_terminal_size = terminal_size;
+            if terminal_size != (0, 0) {
+                let rendered = render_frame(
+                    terminal_size.0,
+                    terminal_size.1,
+                    &position,
+                    max_iterations,
+                    fractal_index,
+                );
+                
+                // Send the rendered frame to the writer thread
+                if let Err(e) = writer_tx.send(WriterCommand::Render(rendered)) {
+                    eprintln!("Failed to send frame to writer thread: {}", e);
+                    break;
+                }
+                
+                last_terminal_size = terminal_size;
+                last_render = std::time::Instant::now();
+                pending_render = false;
+            }
         }
     }
 
+    // Clean up
+    let _ = writer_tx.send(WriterCommand::Terminate);
+    
     execute!(
-        writer,
+        std::io::stdout(),
         terminal::Clear(terminal::ClearType::All),
         cursor::Show,
         cursor::EnableBlinking,
         terminal::LeaveAlternateScreen,
         ResetColor,
     )?;
+    
     terminal::disable_raw_mode()?;
     Ok(())
 }
